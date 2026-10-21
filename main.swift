@@ -15,6 +15,7 @@ import OpenDirectory
 import Security
 
 let service = "mac-unlock"
+let agentLabel = "com.github.yehia-khalil.mac-unlock"  // also in install.sh and uninstall.sh
 let port: NWEndpoint.Port = 7777
 
 // MARK: Keychain
@@ -87,7 +88,14 @@ func setup() {
     pipe.fileHandleForWriting.closeFile()
     pbcopy.waitUntilExit()
     print("Saved. The new token is on the clipboard; paste it into the iPhone Shortcut.")
-    print("Restart the agent so it picks up the new token: ./install.sh")
+
+    // Restart a running agent so it serves the new token; harmless before the first install.
+    let kick = Process()
+    kick.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    kick.arguments = ["kickstart", "-k", "gui/\(getuid())/\(agentLabel)"]
+    kick.standardError = FileHandle.nullDevice
+    try? kick.run()
+    kick.waitUntilExit()
 }
 
 // MARK: unlocking
@@ -200,6 +208,9 @@ func handle(_ request: String, token: String, throttle: Throttle) -> (Int, Strin
 
 func serve() {
     guard let token = keychainRead("token") else { fail("No token stored; run `mac-unlock setup` first") }
+    // Read the password now, not at the first unlock: after an upgrade the Keychain asks to allow
+    // the new binary, and that prompt must appear while someone is at the Mac, not behind the lock.
+    guard keychainRead("password") != nil else { fail("No password stored; run `mac-unlock setup` first") }
     // Asks for Accessibility on behalf of this binary (not the terminal) the first time.
     _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
 

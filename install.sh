@@ -1,18 +1,31 @@
 #!/bin/zsh
-# Build mac-unlock and (re)start it as a LaunchAgent in this login session.
+# Install mac-unlock and (re)start it as a LaunchAgent in this login session.
+# Run from a source checkout it builds first; run from the release DMG it installs the bundled binary.
 # On first run it also asks for your login password and creates the token.
 set -euo pipefail
 cd "${0:A:h}"
 
 label=com.github.yehia-khalil.mac-unlock
+dir="$HOME/Library/Application Support/mac-unlock"
+bin="$dir/mac-unlock"
 plist=~/Library/LaunchAgents/$label.plist
 
-mkdir -p bin
-swiftc -O -o bin/mac-unlock main.swift
+if [[ -f main.swift ]]; then
+  mkdir -p bin
+  swiftc -O -o bin/mac-unlock main.swift
+  src=bin/mac-unlock
+else
+  src=mac-unlock
+fi
+
+launchctl bootout gui/$UID/$label 2>/dev/null || true
+mkdir -p "$dir"
+cp "$src" "$bin"
+xattr -c "$bin"  # drop the download quarantine; you already chose to run this installer
 
 # Looking up the item's attributes (no -w) reads no secret, so it prompts for nothing.
 if ! security find-generic-password -s mac-unlock -a token >/dev/null 2>&1; then
-  bin/mac-unlock setup
+  "$bin" setup
 fi
 
 cat > $plist <<EOF
@@ -21,7 +34,7 @@ cat > $plist <<EOF
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$label</string>
-  <key>ProgramArguments</key><array><string>$PWD/bin/mac-unlock</string><string>serve</string></array>
+  <key>ProgramArguments</key><array><string>$bin</string><string>serve</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Interactive</string>
@@ -30,6 +43,7 @@ cat > $plist <<EOF
 </plist>
 EOF
 
-launchctl bootout gui/$UID/$label 2>/dev/null || true
 launchctl bootstrap gui/$UID $plist
 echo "Running. Log: ~/Library/Logs/mac-unlock.log"
+echo "Next: switch on mac-unlock in Privacy & Security → Accessibility (opening it now)."
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"

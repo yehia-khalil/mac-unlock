@@ -7,7 +7,7 @@ A small background agent on the Mac listens for an unlock request over [Tailscal
 When the request carries the right token, it wakes the display and types your login password into
 the lock screen. On the phone, a plain Apple Shortcut sends the request; there is no app to install.
 
-No dependencies beyond the Swift compiler that ships with Xcode Command Line Tools. Tested on macOS 27.
+A single small binary with no dependencies. Runs on macOS 13 or later, Apple silicon and Intel; tested on macOS 27.
 
 ## How it works
 
@@ -39,8 +39,14 @@ can unlock it.**
 
 ## Install
 
-Requirements: macOS, `swiftc` (`xcode-select --install`), Tailscale on the Mac and the iPhone,
-signed in to the same tailnet.
+You need Tailscale on the Mac and the iPhone, signed in to the same tailnet.
+
+**From the release (no tools needed):** download `mac-unlock-<version>.dmg` from
+[Releases](https://github.com/yehia-khalil/mac-unlock/releases), open it and double-click
+**Install mac-unlock.command**. The release is not notarized, so the first time macOS blocks it:
+open **System Settings → Privacy & Security**, click **Open Anyway**, and run it again.
+
+**From source** (needs `swiftc`: `xcode-select --install`):
 
 ```sh
 git clone https://github.com/yehia-khalil/mac-unlock.git
@@ -48,19 +54,22 @@ cd mac-unlock
 ./install.sh
 ```
 
-The first run builds `bin/mac-unlock`, asks for your login password, copies a new token to the
-clipboard and starts the agent at login. Then:
+Either way the installer copies the binary to `~/Library/Application Support/mac-unlock`, asks for
+your login password on the first run, copies a new token to the clipboard and starts the agent at
+login. Then:
 
-1. **System Settings → Privacy & Security → Accessibility**: switch on `mac-unlock`
-   (add `bin/mac-unlock` with **+** if it is not listed).
-2. Find the Mac's Tailscale address: `tailscale ip -4`.
-3. **On the iPhone**, create a Shortcut:
+1. **System Settings → Privacy & Security → Accessibility** (the installer opens it): switch on
+   `mac-unlock`. If it is not listed, click **+**, press Cmd+Shift+G and enter
+   `~/Library/Application Support/mac-unlock/mac-unlock`.
+2. If macOS asks whether `mac-unlock` may use its Keychain items, choose **Always Allow**.
+3. Find the Mac's Tailscale address: `tailscale ip -4`.
+4. **On the iPhone**, create a Shortcut:
    - **Get Contents of URL**: `http://<tailscale-ip>:7777/unlock`, Method **POST**,
      Header `Authorization` = `Bearer <token>` (paste the token; Universal Clipboard carries it
      over for about two minutes).
    - **Show Result**.
    - Add it to the Home Screen, a widget or the Action button.
-4. Lock the Mac (Ctrl+Cmd+Q) and run the Shortcut. It should answer **Unlocked**.
+5. Lock the Mac (Ctrl+Cmd+Q) and run the Shortcut. It should answer **Unlocked**.
 
 The Mac's `*.ts.net` name works in place of the IP only if **Use Tailscale DNS** is on in the
 iPhone's Tailscale app.
@@ -74,18 +83,25 @@ iPhone's Tailscale app.
 | 401 | `Wrong token` | Check the Shortcut's header |
 | 429 | `Too many wrong tokens…` | Wait ten minutes |
 | 500 | `…no Accessibility permission` | Do step 1 again |
-| 500 | `Still locked after typing the password` | Password changed? Run `bin/mac-unlock setup`, then `./install.sh` |
+| 500 | `Still locked after typing the password` | Password changed? Run setup again (below) |
 
 ## Everyday use
 
-- **New token / changed password:** `bin/mac-unlock setup`, then `./install.sh`.
+- **New token or changed password:**
+  `~/Library/Application\ Support/mac-unlock/mac-unlock setup` (restarts the agent for you).
+- **Update:** run the new release's installer, or `git pull && ./install.sh`.
 - **Logs:** `~/Library/Logs/mac-unlock.log` (one line per request, never the token).
-- **Remove:** `./uninstall.sh`.
+- **Remove:** **Uninstall mac-unlock.command** from the DMG, or `./uninstall.sh`.
+
+## Building a release
+
+`./make-dmg.sh 0.1.0` builds a universal binary and writes `dist/mac-unlock-0.1.0.dmg`.
 
 ## Limits
 
 - A Mac asleep on battery may not answer. On power, turn on **Wake for network access**.
-- Rebuilding changes the binary, so macOS may ask again for Keychain access and Accessibility.
+- Each new build is a new binary, so after an update macOS asks again for Keychain access and
+  Accessibility.
 - It unlocks a locked screen in a logged-in session. It cannot log in after a restart or get past
   FileVault.
 
