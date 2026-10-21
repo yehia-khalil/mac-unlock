@@ -1,0 +1,57 @@
+name: Bug report
+description: Something doesn't unlock, install or behave as the README says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste your token or password here.** The log never contains either, so log lines are safe to share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: response
+    attributes:
+      label: Response the client showed
+      description: For example `Still locked after typing the password`, or a client error like "server could not be found".
+  - type: textarea
+    id: log
+    attributes:
+      label: Log lines
+      description: The last lines of `~/Library/Logs/mac-unlock.log`.
+      render: text
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 27.0.1
+    validations:
+      required: true
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Mac
+      options: [Apple silicon, Intel]
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed from
+      options: [Release DMG, Source checkout]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mac-unlock version or commit
+      placeholder: 0.1.0
+  - type: input
+    id: client
+    attributes:
+      label: Client sending the request
+      placeholder: iPhone Shortcut, curl from a Linux box, ...

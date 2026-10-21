@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a change or something new.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The situation
+      description: When do you run into this? What do you do today instead?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security impact
+      description: This tool can unlock a Mac. Does the change widen who or what can do that?
