@@ -7,6 +7,13 @@ A small background agent on the Mac listens for an unlock request over [Tailscal
 When the request carries the right token, it wakes the display and types your login password into
 the lock screen. On the phone, a plain Apple Shortcut sends the request; there is no app to install.
 
+The iPhone is just the handiest client. The request is plain HTTP, so any device on your tailnet can
+send it: another Mac, a Linux box, an Android phone, a script.
+
+```sh
+curl -X POST -H "Authorization: Bearer <token>" http://<mac-tailscale-ip>:7777/unlock
+```
+
 A single small binary with no dependencies. Runs on macOS 13 or later, Apple silicon and Intel; tested on macOS 27.
 
 ## How it works
@@ -24,8 +31,16 @@ key events, the same way proximity-unlock apps do. That needs Accessibility perm
 
 ## Security
 
-Read this before installing: **anyone who has the token and can reach your Mac over your tailnet
-can unlock it.**
+Read this before installing: **the token is the only thing that decides who may unlock.** The
+agent does not know or check which device is calling. Any request that carries the token unlocks
+the Mac if it comes from:
+
+- any device on your tailnet, not only your iPhone;
+- any device or person you have [shared the Mac with](https://tailscale.com/kb/1084/sharing)
+  through Tailscale, and anyone else who joins your tailnet;
+- any program running on the Mac itself, through loopback.
+
+Keep the token as private as your password. Lock down who can reach the Mac with the steps below.
 
 - Only Tailscale peers (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) and loopback are answered. Your
   LAN and the internet get no response.
@@ -35,7 +50,11 @@ can unlock it.**
 - Your password and the token live in the login Keychain, readable only by the `mac-unlock` binary.
 - `setup` checks the password against your account before storing it, so a typo is never typed
   at the lock screen, and it puts the token on the clipboard rather than printing it.
-- Use Tailscale ACLs to limit which of your devices may reach port 7777 on the Mac.
+- Use [Tailscale access controls](https://tailscale.com/kb/1018/acls) to allow only your phone
+  to reach port 7777 on the Mac, for example:
+  `{"action": "accept", "src": ["<your-iphone>"], "dst": ["<your-mac>:7777"]}`.
+- If the token may have leaked, run `setup` again (see Everyday use). The old token stops working
+  at once.
 
 ## Install
 
