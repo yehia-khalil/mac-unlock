@@ -37,13 +37,17 @@ the Mac if it comes from:
 
 - any device on your tailnet, not only your iPhone;
 - any device or person you have [shared the Mac with](https://tailscale.com/kb/1084/sharing)
-  through Tailscale, and anyone else who joins your tailnet;
-- any program running on the Mac itself, through loopback.
+  through Tailscale, and anyone else who joins your tailnet.
 
 Keep the token as private as your password. Lock down who can reach the Mac with the steps below.
 
-- Only Tailscale peers (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) and loopback are answered. Your
-  LAN and the internet get no response.
+- The agent listens only on the Tailscale interface (the `utun` holding a `fd7a:115c:a1e0::/48`
+  address), so the kernel never hands it a connection that arrived over Wi-Fi, Ethernet or
+  loopback. Your LAN, a router port forward, programs on the Mac and the internet get no
+  response. It also checks that the caller has a Tailscale address (`100.64.0.0/10` or
+  `fd7a:115c:a1e0::/48`), which rules out hosts behind someone's subnet router.
+- If Tailscale is off when the agent starts, or Tailscale replaces its interface, the agent exits
+  and launchd starts it again within seconds, on the new interface.
 - Requests travel inside Tailscale's WireGuard tunnel, so the plain HTTP is encrypted end to end.
 - The token is 256 random bits, compared in constant time. Five wrong tokens shut the endpoint for
   ten minutes.
