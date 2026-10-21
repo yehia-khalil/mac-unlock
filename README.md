@@ -123,8 +123,11 @@ iPhone's Tailscale app.
 ## Limits
 
 - A Mac asleep on battery may not answer. On power, turn on **Wake for network access**.
-- Each new build is a new binary, so after an update macOS asks again for Keychain access and
-  Accessibility.
+- Each new build is a new binary, and macOS ties Accessibility to the exact build. After an
+  update the old entry can still show as on while the new build gets `no Accessibility
+  permission`. Remove every `mac-unlock` from Accessibility with **−**, run
+  `launchctl kickstart -k gui/$UID/com.github.yehia-khalil.mac-unlock`, and switch it on when
+  macOS asks. If the Keychain asks to allow `mac-unlock`, choose **Always Allow**.
 - It unlocks a locked screen in a logged-in session. It cannot log in after a restart or get past
   FileVault.
 
