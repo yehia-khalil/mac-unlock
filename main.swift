@@ -3,8 +3,8 @@
 //   mac-unlock setup   store the login password and a fresh token in the Keychain
 //   mac-unlock serve   listen on :7777 for `POST /unlock` with `Authorization: Bearer <token>`
 //
-// Only Tailscale (100.64.0.0/10) and loopback peers are served. The password is typed
-// into the lock screen with synthetic key events, which needs Accessibility permission.
+// Only connections arriving through the Tailscale interface, from Tailscale addresses, are served.
+// The password is typed into the lock screen with synthetic key events, which needs Accessibility.
 
 import ApplicationServices
 import CoreGraphics
@@ -150,20 +150,40 @@ func unlock() -> (Int, String) {
 
 // MARK: serve
 
-/// Peers outside Tailscale and loopback are refused before the token is even read.
+func isTailscaleIPv4(_ b: [UInt8]) -> Bool { b[0] == 100 && (b[1] & 0xC0) == 64 }  // 100.64.0.0/10
+// Tailscale's own IPv6 range, fd7a:115c:a1e0::/48. Unlike 100.64.0.0/10, which other VPNs and
+// carrier-grade NAT also use, nothing else claims it.
+func isTailscaleIPv6(_ b: [UInt8]) -> Bool { b.prefix(6).elementsEqual([0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0]) }
+
+/// The listener only sees connections that came in through the Tailscale interface; this further
+/// limits them to Tailscale devices themselves, not hosts behind someone's subnet router.
 func allowed(_ endpoint: NWEndpoint) -> Bool {
     guard case let .hostPort(host, _) = endpoint else { return false }
     switch host {
     case let .ipv4(address):
-        let b = [UInt8](address.rawValue)
-        return b == [127, 0, 0, 1] || (b[0] == 100 && (b[1] & 0xC0) == 64)
+        return isTailscaleIPv4([UInt8](address.rawValue))
     case let .ipv6(address):
-        if address == .loopback { return true }
-        // Tailscale's IPv6 range, fd7a:115c:a1e0::/48.
-        return [UInt8](address.rawValue).prefix(6).elementsEqual([0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0])
+        return isTailscaleIPv6([UInt8](address.rawValue))
     default:
         return false
     }
+}
+
+/// The name of the Tailscale tunnel interface (a `utun`): the one holding an fd7a:115c:a1e0::/48 address.
+func tailscaleInterfaceName() -> String? {
+    var head: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&head) == 0 else { return nil }
+    defer { freeifaddrs(head) }
+    var next = head
+    while let ifa = next {
+        next = ifa.pointee.ifa_next
+        guard let sa = ifa.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET6) else { continue }
+        let bytes = sa.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+            withUnsafeBytes(of: $0.pointee.sin6_addr) { Array($0) }
+        }
+        if isTailscaleIPv6(bytes) { return String(cString: ifa.pointee.ifa_name) }
+    }
+    return nil
 }
 
 func constantTimeEqual(_ a: String, _ b: String) -> Bool {
@@ -216,24 +236,44 @@ func serve() {
 
     let queue = DispatchQueue(label: "mac-unlock")  // one request at a time
     let throttle = Throttle()
-    let listener: NWListener
-    do { listener = try NWListener(using: .tcp, on: port) } catch { fail("Cannot listen on \(port): \(error)") }
 
-    listener.newConnectionHandler = { connection in
-        guard allowed(connection.endpoint) else { connection.cancel(); return }
-        connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
-            let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            let (status, body) = handle(request, token: token, throttle: throttle)
-            NSLog("%@ -> %d %@", "\(connection.endpoint)", status, body)
-            respond(connection, status, body)
+    // Bind to the Tailscale interface, so the kernel never hands us a connection that arrived on
+    // Wi-Fi, Ethernet or loopback, port forwarding included. If Tailscale is down, or later
+    // replaces its interface, exit and let launchd start us again on the new one.
+    var bound: NWInterface?
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { path in
+        let name = tailscaleInterfaceName()
+        let tunnel = path.availableInterfaces.first { $0.name == name }
+        if let bound {
+            if tunnel?.name != bound.name || tunnel?.index != bound.index { fail("Tailscale interface changed; restarting") }
+            return
         }
+        guard let tunnel else { fail("Tailscale is not connected; launchd will retry") }
+        bound = tunnel
+
+        let parameters = NWParameters.tcp
+        parameters.requiredInterface = tunnel
+        let listener: NWListener
+        do { listener = try NWListener(using: parameters, on: port) } catch { fail("Cannot listen on \(port): \(error)") }
+
+        listener.newConnectionHandler = { connection in
+            guard allowed(connection.endpoint) else { connection.cancel(); return }
+            connection.start(queue: queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
+                let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let (status, body) = handle(request, token: token, throttle: throttle)
+                NSLog("%@ -> %d %@", "\(connection.endpoint)", status, body)
+                respond(connection, status, body)
+            }
+        }
+        listener.stateUpdateHandler = { state in
+            if case let .failed(error) = state { fail("Listener failed: \(error)") }
+        }
+        listener.start(queue: queue)
+        NSLog("mac-unlock listening on %@:%d", tunnel.name, Int(port.rawValue))
     }
-    listener.stateUpdateHandler = { state in
-        if case let .failed(error) = state { fail("Listener failed: \(error)") }
-    }
-    listener.start(queue: queue)
-    NSLog("mac-unlock listening on :%d", Int(port.rawValue))
+    monitor.start(queue: queue)
     dispatchMain()
 }
 
