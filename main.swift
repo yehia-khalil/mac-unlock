@@ -105,10 +105,25 @@ func screenIsLocked() -> Bool {
     return (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
 }
 
-func wakeDisplay() {
-    var id: IOPMAssertionID = 0
-    IOPMAssertionDeclareUserActivity("mac-unlock" as CFString, kIOPMUserActiveLocal, &id)
-    IOPMAssertionRelease(id)
+/// Wakes the display and keeps it on until the returned release is called. The lock screen turns
+/// the display off after a few idle seconds; keys typed while it is off or still waking are lost.
+func holdDisplayAwake() -> () -> Void {
+    var activity: IOPMAssertionID = 0, noSleep: IOPMAssertionID = 0
+    IOPMAssertionDeclareUserActivity("mac-unlock" as CFString, kIOPMUserActiveLocal, &activity)
+    // The timeout makes powerd drop the hold itself: releasing it by hand after waking a sleeping
+    // display was seen to leave it behind, and a leaked hold keeps the display on for good.
+    IOPMAssertionCreateWithDescription(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+                                       "mac-unlock" as CFString, nil, nil, nil, 30,
+                                       kIOPMAssertionTimeoutActionRelease as CFString, &noSleep)
+    return { IOPMAssertionRelease(activity); IOPMAssertionRelease(noSleep) }
+}
+
+func waitForDisplay() -> Bool {
+    for _ in 0..<40 {
+        if CGDisplayIsAsleep(CGMainDisplayID()) == 0 { return true }
+        Thread.sleep(forTimeInterval: 0.25)
+    }
+    return false
 }
 
 func post(_ event: CGEvent?) {
@@ -116,8 +131,19 @@ func post(_ event: CGEvent?) {
     usleep(15_000)
 }
 
+func key(_ source: CGEventSource?, _ code: CGKeyCode, _ flags: CGEventFlags = []) {
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down)
+        event?.flags = flags
+        post(event)
+    }
+}
+
 func type(_ text: String) {
     let source = CGEventSource(stateID: .hidSystemState)
+    // Clear whatever an earlier, interrupted attempt left in the password field.
+    key(source, 0, .maskCommand)  // ⌘A
+    key(source, 51)               // Delete
     for unit in text.utf16 {
         var chars = [unit]
         for down in [true, false] {
@@ -126,9 +152,7 @@ func type(_ text: String) {
             post(event)
         }
     }
-    let returnKey: CGKeyCode = 36
-    post(CGEvent(keyboardEventSource: source, virtualKey: returnKey, keyDown: true))
-    post(CGEvent(keyboardEventSource: source, virtualKey: returnKey, keyDown: false))
+    key(source, 36)  // Return
 }
 
 /// Returns an HTTP status and a one-line message for the phone.
@@ -137,8 +161,10 @@ func unlock() -> (Int, String) {
     guard AXIsProcessTrusted() else { return (500, "mac-unlock has no Accessibility permission") }
     guard let password = keychainRead("password") else { return (500, "No password stored; run setup") }
 
-    wakeDisplay()
-    Thread.sleep(forTimeInterval: 1.5)  // let the lock screen come up and focus the password field
+    let release = holdDisplayAwake()
+    defer { release() }
+    guard waitForDisplay() else { return (500, "The display did not wake") }
+    Thread.sleep(forTimeInterval: 1.0)  // let the lock screen come up and focus the password field
     type(password)
 
     for _ in 0..<20 {
